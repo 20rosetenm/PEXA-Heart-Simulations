@@ -1,19 +1,24 @@
-#!/usr/bin/env python3
-
-import pygmsh
 import meshio
 import numpy as np
 import vtk
+import pdb  # Optional: If you're using pdb for debugging
+import os
 
-def read_vtp(file_path):
+def read_vtk(filename):
     """Read a VTP file and extract the surface mesh."""
+    if not os.path.exists(filename):
+        raise ValueError("File does not exist: " + filename)
+
     reader = vtk.vtkXMLPolyDataReader()
-    reader.SetFileName(file_path)
+    reader.SetFileName(filename)
     reader.Update()
     polydata = reader.GetOutput()
 
     points = polydata.GetPoints()
     cells = polydata.GetPolys()
+
+    if points is None:
+        raise ValueError("Error reading file: " + filename)
 
     vertices = []
     faces = []
@@ -21,7 +26,8 @@ def read_vtp(file_path):
     # Extract points
     for i in range(points.GetNumberOfPoints()):
         vertices.append(points.GetPoint(i))
-    
+
+    pdb.set_trace()
     # Extract faces
     for i in range(cells.GetNumberOfCells()):
         cell = cells.GetCell(i)
@@ -30,7 +36,7 @@ def read_vtp(file_path):
             face.append(cell.GetPointId(j))
         faces.append(face)
 
-    return np.array(vertices), faces
+    return np.array(vertices), np.array(faces)
 
 def generate_volume_mesh(vertices, faces, volume_size):
     """Generate a volume mesh from the given surface mesh."""
@@ -52,16 +58,16 @@ def export_vtu(mesh, output_file):
 
 def main(vtp_file, output_file, volume_size=0.1):
     # Step 1: Read the VTP surface mesh
-    vertices, faces = read_vtp(vtp_file)
+    vertices, faces = read_vtk(vtp_file)
 
-    # Step 2: Generate a volume mesh
-    mesh = generate_volume_mesh(vertices, faces, volume_size)
+    # Step 2: Generate the volume mesh
+    volume_mesh = generate_volume_mesh(vertices, faces, volume_size)
 
-    # Step 3: Export the volume mesh to VTU
-    export_vtu(mesh, output_file)
+    # Step 3: Export the volume mesh to VTU format
+    export_vtu(volume_mesh, output_file)
 
+# Call the main function (you can pass appropriate file paths as needed)
 if __name__ == "__main__":
-    vtp_file = "input_surface_mesh.vtp"  # Path to the input VTP file
-    output_file = "output_volume_mesh.vtu"  # Path to the output VTU file
+    vtp_file = "/home/nrosete/repos/svFSIplus/tests/cases/struct/LV_Holzapfel_passive/mesh/mesh-complete.exterior.vtp"  # Replace with actual .vtp file path
+    output_file = "output_mesh.vtu"  # Replace with desired output .vtu file path
     main(vtp_file, output_file)
-
