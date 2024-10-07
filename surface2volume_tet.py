@@ -22,5 +22,5 @@ tetgen_pv = tet.grid
 tetgen_pv.plot()
 
 # Step 5: Save the tetrahedralized mesh in a desired format
-tetgen_pv.save("tetrahedral_volume_mesh.vtu")
+tetgen_pv.save("mesh-complete.exterior.vtu")
 
