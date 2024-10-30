@@ -8,28 +8,36 @@ def load_segmentation(input_file):
     """Load segmentation from .nrrd or .nii/.nii.gz file."""
     print(f"Loading segmentation from {input_file}...")
     img = sitk.ReadImage(input_file)  # Read the segmentation file
-    seg = sitk.GetArrayFromImage(img)  # Convert to NumPy array (shape: [D, H, W])
+    seg = sitk.GetArrayFromImage(img)  # Convert to NumPy array (shape: [T, Z, Y, X])
 
-    # Extract spacing and origin (for accurate rendering)
-    spacing = img.GetSpacing()[::-1]  # Reverse for [Z, Y, X] order
+    # Extract spacing and origin
+    spacing = img.GetSpacing()[::-1]  # Reverse to [Z, Y, X]
     origin = img.GetOrigin()
-    
+
     print(f"Segmentation loaded with shape {seg.shape}, spacing {spacing}, origin {origin}.")
     return seg, spacing, origin
 
-# Step 2: Define/Paramaterize Segmentation Data
-def seg_to_polydata(seg, isolevel=0.5, spacing=[1, 1, 1], origin=[0, 0, 0], 
+# Step 2: Convert Segmentation to PyVista PolyData
+def seg_to_polydata(seg, isolevel=0.5, spacing=[1, 1, 1], origin=[0, 0, 0],
                     smooth=True, volume_threshold=0.0, subdivide=0):
-    """Convert segmentation to surface mesh using PyVista."""
-    if seg.sum() == 0:  # Check if the segmentation is empty
+    """Convert a single 3D segmentation volume to surface mesh."""
+    # Extract a single 3D volume if segmentation is 4D
+    if seg.ndim == 4:
+        print("Extracting the first volume from the 4D segmentation...")
+        seg = seg[0]  # Extract the first volume (adjust index if needed)
+
+    # Check if segmentation data is empty
+    if seg.sum() == 0:
         print("Warning: Segmentation data is empty. Returning empty PolyData.")
         return pv.PolyData()
 
-# Step 3: Create PyVista ImageData from segmentation
-    seg_pv = pv.ImageData(dimensions=seg.shape, spacing=spacing, origin=origin)
+    # Create PyVista ImageData (dimensions = [NX, NY, NZ])
+    dims = seg.shape[::-1]  # Reverse to match PyVista's [NX, NY, NZ] format
+    seg_pv = pv.ImageData(dimensions=dims, spacing=spacing, origin=origin)
+
+    # Flatten the single 3D volume with 'F' order
     seg_pv.point_data['values'] = seg.flatten(order='F')
 
-# Step 4: Mesh Cleanup
     # Generate the surface mesh using contouring
     mesh_pv = seg_pv.contour([isolevel])
 
@@ -51,32 +59,26 @@ def seg_to_polydata(seg, isolevel=0.5, spacing=[1, 1, 1], origin=[0, 0, 0],
 
     return mesh_pv
 
+# Step 3: Main Function
 def main(input_file, output_file):
-# Step 5: Load segmentation data from input - main
+    # Load segmentation data from input
     seg, spacing, origin = load_segmentation(input_file)
 
-# Step 6: Convert segmentation to surface mesh - main
+    # Convert segmentation to surface mesh
     print("Converting segmentation to surface mesh...")
     mesh = seg_to_polydata(seg, spacing=spacing, origin=origin)
 
-# Step 7: Save the surface mesh to the output file - main
+    # Save the surface mesh to the output file
     print(f"Saving surface mesh to {output_file}...")
     mesh.save(output_file)
 
-# Step 8: Display the surface mesh
-    print("Displaying surface mesh...")
-    plotter = pv.Plotter()
-    plotter.add_mesh(mesh, color='white', show_edges=True)
-    plotter.show()
-
-if __name__ == "__main__":
-    # Setup argument parser to accept input and output files
-    parser = argparse.ArgumentParser(description="Convert 3D Slicer segmentation to surface mesh.")
-    parser.add_argument("input_file", type=str, help="Path to the input segmentation (.nrrd, .nii, .nii.gz)")
-    parser.add_argument("output_file", type=str, help="Path to the output surface mesh (.vtp)")
+# Step 4: Command-Line Interface
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Convert voxel data to surface mesh.")
+    parser.add_argument("input_file", help="Path to the input NRRD/NIfTI file.")
+    parser.add_argument("output_file", help="Path to the output mesh file.")
     args = parser.parse_args()
 
-# Step 9: Run the main function
+    # Run the main function
     main(args.input_file, args.output_file)
-
-#Run script in ubuntu: python3 voxel2surfacemesh.py [filename] 
+                                                                                             
