@@ -1,3 +1,4 @@
+#Edit script to take .ply instead of .vtp
 import argparse
 import pyvista as pv
 import tetgen
