@@ -46,12 +46,16 @@ def load_img_file(file):
 
 # Step 4: Visualize Slices of Segemntations & Generated Mesh
 def visualize_mesh(vertices, faces):
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
     # Visualize the mesh using matplotlib
-    fig = plt.figure()
+    fig = plt.figure(dpi=300)  # High resolution
     ax = fig.add_subplot(111, projection='3d')
-    
+
     # Create a Poly3DCollection for visualization
-    mesh = Poly3DCollection(vertices[faces], alpha=0.7, edgecolor='k')
+    # Make the mesh fully opaque (non-transparent)
+    mesh = Poly3DCollection(vertices[faces], alpha=1.0, facecolor='white', edgecolor='b', linewidth=0.03)
     ax.add_collection3d(mesh)
 
     # Set plot limits
@@ -59,12 +63,12 @@ def visualize_mesh(vertices, faces):
     ax.set_ylim(0, vertices[:, 1].max())
     ax.set_zlim(0, vertices[:, 2].max())
 
-    # Set labels
-    ax.set_xlabel("X")
-    ax.set_ylabel("Y")
-    ax.set_zlabel("Z")
-
+    # Remove axis and grid
+    ax.axis('off')
+    
+    # Title
     plt.title("Extracted Mesh Visualization")
+
     plt.show()
 
 if __name__ == "__main__":
