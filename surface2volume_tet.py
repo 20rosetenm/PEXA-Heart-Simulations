@@ -1,78 +1,112 @@
-#Edit script to take .ply instead of .vtp
-import argparse
 import pyvista as pv
-import tetgen
+import trimesh
+import numpy as np
+import sys
+import pdb
 
-def load_ply_file(input_file):
-    """Load PLY file using PyVista."""
-    print(f"Loading PLY file: {input_file}...")
-    surface_mesh = pv.read(input_file)
-    return surface_mesh
+def preprocess_with_trimesh(input_file):
+    """Load and clean the mesh with trimesh."""
+    print(f"Loading mesh: {input_file}")
+    trimesh_mesh = trimesh.load(input_file)
+
+    print("Fixing mesh winding...")
+    trimesh.repair.fix_winding(trimesh_mesh)
+
+    print("Filling holes...")
+    trimesh.repair.fill_holes(trimesh_mesh)
+
+    print("Removing degenerate faces using new API...")
+    trimesh_mesh.update_faces(trimesh_mesh.nondegenerate_faces())
+
+    print("Checking for non-manifold geometry...")
+
+    # Create a dictionary to count occurrences of edges in faces
+    edge_count = {}
+    for edge in trimesh_mesh.edges_unique:
+        edge_tuple = tuple(sorted(edge))  # Sort to make the edge direction invariant
+        edge_count[edge_tuple] = edge_count.get(edge_tuple, 0) + 1
+
+    # Non-manifold edges are those that appear in more than two faces
+    non_manifold_edges = [edge for edge, count in edge_count.items() if count > 2]
+    num_non_manifold_edges = len(non_manifold_edges)
+
+    print(f"Found {num_non_manifold_edges} non-manifold edges.")
+
+    if num_non_manifold_edges > 0:
+        print("Attempting to repair non-manifold geometry...")
+
+        # Split into connected components and keep the largest **watertight** one
+        components = trimesh_mesh.split(only_watertight=True)
+        if components:
+            print(f"Mesh has {len(components)} disconnected components. Keeping the largest watertight one.")
+            trimesh_mesh = max(components, key=lambda c: c.area)
+        else:
+            print("Error: No manifold component found.")
+            return None
+
+    # Export the repaired mesh to a temporary file and reload it
+    repaired_file = "repaired_mesh.ply"
+    trimesh_mesh.export(repaired_file)
+    return pv.read(repaired_file)
 
 def check_mesh_properties(mesh):
-    """Check and print mesh properties."""
-    print(f"Mesh is manifold: {mesh.is_manifold}")
-    print(f"Mesh is watertight: {mesh.is_all_triangles() and mesh.is_manifold}")
-    print(f"Mesh has {mesh.n_cells} cells and {mesh.n_points} points.")
+    """Check properties of the mesh."""
+    is_manifold = mesh.is_manifold
+    is_surface = mesh.n_cells > 0 and mesh.is_all_triangles
+    edges = mesh.extract_all_edges()
+    boundary_edges = edges.extract_feature_edges(boundary_edges=True)
+    is_watertight = boundary_edges.n_cells == 0
 
-def repair_mesh(mesh):
-    """Repair the mesh to make it more suitable for tetrahedralization."""
-    print("Repairing the mesh...")
-    # Clean the mesh (removes duplicate points, etc.)
-    mesh = mesh.clean()
+    print(f"Mesh is manifold: {is_manifold}")
+    print(f"Mesh is watertight: {is_watertight}")
+    print(f"Mesh is all triangles: {mesh.is_all_triangles}")
+    print(f"Mesh is a surface mesh: {is_surface}")
+    print(f"Mesh has {mesh.n_cells} cells and {mesh.n_points} points")
 
-    # Fill small holes if they exist
-    mesh = mesh.fill_holes(size=100.0)  # Adjust size based on expected hole size
+def generate_volume_mesh(surface_mesh):
+    """Generate a volume mesh from a surface mesh."""
+    if surface_mesh.n_cells > 0 and surface_mesh.is_manifold:
+        volume_mesh = surface_mesh.tetrahedralize()
+        return volume_mesh
+    else:
+        print("Error: The mesh is not suitable for tetrahedralization.")
+        return None
 
-    # Extract largest connected surface if there are multiple disconnected components
-    mesh = mesh.extract_largest_surface()
-
-    return mesh
-
-def convert_to_volume_mesh(surface_mesh):
-    """Convert a surface mesh to a volume mesh using TetGen."""
-    print("Converting surface mesh to volume mesh...")
-
-    # Create a TetGen instance
-    tet = tetgen.TetGen(surface_mesh)
-
-    # Perform tetrahedralization with some parameters
-    try:
-        nodes, elems = tet.tetrahedralize(order=1)  # Tetrahedralize with specified order
-    except RuntimeError as e:
-        print(f"Error during tetrahedralization: {e}")
-        raise
-
-    # Create a PyVista UnstructuredGrid
-    volume_mesh = tet.grid
-
+def add_scalars_to_volume_mesh(volume_mesh):
+    """Add scalar data to the volume mesh for visualization in ParaView."""
+    center = volume_mesh.center
+    distances = np.linalg.norm(volume_mesh.points - center, axis=1)
+    volume_mesh.point_data['DistanceFromCenter'] = distances
     return volume_mesh
 
-def main(input_ply_file, output_vtu_file):
-    # Load surface mesh from PLY file
-    surface_mesh = load_ply_file(input_ply_file)
-
-    # Check and repair the mesh
-    check_mesh_properties(surface_mesh)
-    surface_mesh = repair_mesh(surface_mesh)
-
-    # Convert surface mesh to volume mesh
-    try:
-        volume_mesh = convert_to_volume_mesh(surface_mesh)
-    except RuntimeError:
-        print("Tetrahedralization failed even after repair. Please inspect the mesh.")
+def main(input_ply_file, output_vtk_file):
+    # Preprocess the surface mesh with trimesh
+    surface_mesh = preprocess_with_trimesh(input_ply_file)
+    if surface_mesh is None:
+        print("Error: Failed to preprocess the mesh.")
         return
 
-    # Save the volume mesh to a VTU file
-    print(f"Saving volume mesh to {output_vtu_file}...")
-    volume_mesh.save(output_vtu_file)
+    # Check the properties of the surface mesh
+    check_mesh_properties(surface_mesh)
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Convert surface mesh to volume mesh.")
-    parser.add_argument("input_ply_file", help="Path to the input PLY file.")
-    parser.add_argument("output_vtu_file", help="Path to the output VTU file.")
-    args = parser.parse_args()
+    # Generate the volume mesh (tetrahedralization)
+    volume_mesh = generate_volume_mesh(surface_mesh)
+
+    if volume_mesh:
+        # Add scalar data (e.g., DistanceFromCenter) to the volume mesh
+        volume_mesh = add_scalars_to_volume_mesh(volume_mesh)
+
+        # Save the generated volume mesh with added scalar data
+        volume_mesh.save(output_vtk_file)
+        print(f"Volume mesh saved to: {output_vtk_file}")
+    else:
+        print("Volume mesh generation failed.")
+
+# File paths from command-line arguments
+if __name__ == "__main__":
+    input_ply_file = sys.argv[1]
+    output_vtk_file = sys.argv[2]
 
     # Run the main function
-    main(args.input_ply_file, args.output_vtu_file)
+    main(input_ply_file, output_vtk_file)
 
