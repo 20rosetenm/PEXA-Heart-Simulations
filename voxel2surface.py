@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 # Step 1: Load/Extract from binary mesh
-def extract_meshes_from_segm(segm, mesh_filename):
+def extract_meshes_from_segm(segm, mesh_filename,affine):
     # Myocardium label extraction (assuming label 1 for segmentation)
     label_1 = np.zeros_like(segm)
     label_1[segm == 1] = 1
@@ -23,6 +23,7 @@ def extract_meshes_from_segm(segm, mesh_filename):
 
     # Use trimesh for saving the mesh
     mesh = trimesh.Trimesh(vertices=verts, faces=faces, process=False)
+    mesh = mesh.apply_transform(affine)
     print(f'Mesh is watertight: {mesh.is_watertight}')
     print(f'Number of vertices: {verts.shape[0]}')
 
@@ -42,7 +43,8 @@ def save_mesh(mesh, filename):
 def load_img_file(file):
     # Load image using nibabel for NIfTI files
     data = nib.load(file)
-    return data.get_fdata()
+    affine = data.affine
+    return data.get_fdata(), affine
 
 # Step 4: Visualize Slices of Segemntations & Generated Mesh
 def visualize_mesh(vertices, faces):
@@ -81,8 +83,8 @@ if __name__ == "__main__":
     output_mesh_file = sys.argv[2]
 
     # Load input NIfTI file
-    segm = load_img_file(input_nifti_file)
+    segm,affine = load_img_file(input_nifti_file)
 
     # Extract mesh and save it to the output file
-    extract_meshes_from_segm(segm, output_mesh_file)
+    extract_meshes_from_segm(segm, output_mesh_file,affine)
 
