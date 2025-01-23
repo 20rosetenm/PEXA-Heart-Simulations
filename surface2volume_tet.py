@@ -7,46 +7,53 @@ import pdb
 def preprocess_with_trimesh(input_file):
     """Load and clean the mesh with trimesh."""
     print(f"Loading mesh: {input_file}")
+
+    # Load the mesh using trimesh
     trimesh_mesh = trimesh.load(input_file)
 
     print("Fixing mesh winding...")
-    trimesh.repair.fix_winding(trimesh_mesh)
+    trimesh.repair.fix_winding(trimesh_mesh)  # Fix inconsistent face winding
 
     print("Filling holes...")
-    trimesh.repair.fill_holes(trimesh_mesh)
+    trimesh.repair.fill_holes(trimesh_mesh)   # Fill holes in the surface mesh
 
     print("Removing degenerate faces using new API...")
     trimesh_mesh.update_faces(trimesh_mesh.nondegenerate_faces())
 
+    print("Fixing normals and ensuring consistent connectivity...")
+    trimesh.repair.fix_normals(trimesh_mesh)  # Fix normal consistency
+
     print("Checking for non-manifold geometry...")
 
-    # Create a dictionary to count occurrences of edges in faces
+    # Identify non-manifold edges and vertices
     edge_count = {}
     for edge in trimesh_mesh.edges_unique:
-        edge_tuple = tuple(sorted(edge))  # Sort to make the edge direction invariant
+        edge_tuple = tuple(sorted(edge))
         edge_count[edge_tuple] = edge_count.get(edge_tuple, 0) + 1
 
-    # Non-manifold edges are those that appear in more than two faces
     non_manifold_edges = [edge for edge, count in edge_count.items() if count > 2]
-    num_non_manifold_edges = len(non_manifold_edges)
+    has_non_manifold_edges = len(non_manifold_edges) > 0
+    has_non_manifold_vertices = not trimesh_mesh.is_watertight
 
-    print(f"Found {num_non_manifold_edges} non-manifold edges.")
-
-    if num_non_manifold_edges > 0:
-        print("Attempting to repair non-manifold geometry...")
-
-        # Split into connected components and keep the largest **watertight** one
-        components = trimesh_mesh.split(only_watertight=True)
+    if has_non_manifold_edges or has_non_manifold_vertices:
+        print("Mesh contains non-manifold geometry. Attempting to fix...")
+        
+        # Split into connected components and keep the largest one
+        components = trimesh_mesh.split(only_watertight=False)
         if components:
-            print(f"Mesh has {len(components)} disconnected components. Keeping the largest watertight one.")
             trimesh_mesh = max(components, key=lambda c: c.area)
+            print(f"Mesh has {len(components)} components. Keeping the largest one.")
+            trimesh_mesh.export("step_largest_component.ply")
         else:
             print("Error: No manifold component found.")
             return None
 
-    # Export the repaired mesh to a temporary file and reload it
+    # Export repaired mesh for inspection
     repaired_file = "repaired_mesh.ply"
     trimesh_mesh.export(repaired_file)
+    print(f"Repaired mesh saved: {repaired_file}")
+
+    # Load into PyVista for further processing
     return pv.read(repaired_file)
 
 def check_mesh_properties(mesh):
@@ -63,8 +70,12 @@ def check_mesh_properties(mesh):
     print(f"Mesh is a surface mesh: {is_surface}")
     print(f"Mesh has {mesh.n_cells} cells and {mesh.n_points} points")
 
+    if not is_manifold:
+        print("Warning: Mesh is not manifold, which may cause issues in tetrahedralization.")
+
 def generate_volume_mesh(surface_mesh):
     """Generate a volume mesh from a surface mesh."""
+    print("Generating volume mesh...")
     if surface_mesh.n_cells > 0 and surface_mesh.is_manifold:
         volume_mesh = surface_mesh.tetrahedralize()
         return volume_mesh
@@ -83,7 +94,7 @@ def main(input_ply_file, output_vtk_file):
     # Preprocess the surface mesh with trimesh
     surface_mesh = preprocess_with_trimesh(input_ply_file)
     if surface_mesh is None:
-        print("Error: Failed to preprocess the mesh.")
+        print("Error: Failed to process the surface mesh.")
         return
 
     # Check the properties of the surface mesh
