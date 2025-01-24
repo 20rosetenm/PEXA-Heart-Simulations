@@ -2,7 +2,7 @@ import pyvista as pv
 import trimesh
 import numpy as np
 import sys
-import pdb
+import tetgen
 
 def preprocess_with_trimesh(input_file):
     """Load and clean the mesh with trimesh."""
@@ -24,7 +24,7 @@ def preprocess_with_trimesh(input_file):
     trimesh.repair.fix_normals(trimesh_mesh)  # Fix normal consistency
 
     print("Checking for non-manifold geometry...")
-
+    
     # Identify non-manifold edges and vertices
     edge_count = {}
     for edge in trimesh_mesh.edges_unique:
@@ -37,7 +37,7 @@ def preprocess_with_trimesh(input_file):
 
     if has_non_manifold_edges or has_non_manifold_vertices:
         print("Mesh contains non-manifold geometry. Attempting to fix...")
-        
+
         # Split into connected components and keep the largest one
         components = trimesh_mesh.split(only_watertight=False)
         if components:
@@ -74,14 +74,23 @@ def check_mesh_properties(mesh):
         print("Warning: Mesh is not manifold, which may cause issues in tetrahedralization.")
 
 def generate_volume_mesh(surface_mesh):
-    """Generate a volume mesh from a surface mesh."""
+    """Generate a volume mesh from a surface mesh using TetGen."""
     print("Generating volume mesh...")
-    if surface_mesh.n_cells > 0 and surface_mesh.is_manifold:
-        volume_mesh = surface_mesh.tetrahedralize()
-        return volume_mesh
-    else:
-        print("Error: The mesh is not suitable for tetrahedralization.")
+    
+    if not surface_mesh.is_manifold:
+        print("Error: The mesh is not manifold and may not be suitable for tetrahedralization.")
         return None
+
+    # Convert PolyData to TetGen-compatible format
+    tet = tetgen.TetGen(surface_mesh)
+    
+    # Perform tetrahedralization
+    tet.tetrahedralize()
+
+    # Extract the volume mesh as a PyVista UnstructuredGrid
+    volume_mesh = tet.grid
+    
+    return volume_mesh
 
 def add_scalars_to_volume_mesh(volume_mesh):
     """Add scalar data to the volume mesh for visualization in ParaView."""
@@ -117,7 +126,6 @@ def main(input_ply_file, output_vtk_file):
 if __name__ == "__main__":
     input_ply_file = sys.argv[1]
     output_vtk_file = sys.argv[2]
-
     # Run the main function
     main(input_ply_file, output_vtk_file)
 
