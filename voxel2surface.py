@@ -1,113 +1,98 @@
 import numpy as np
-import sys
-import nrrd
-import trimesh
 import pyvista as pv
-import matplotlib.pyplot as plt
-from skimage.measure import marching_cubes, label, regionprops
-from skimage.morphology import binary_closing, ball
-from scipy.ndimage import binary_fill_holes
 import tetgen
+import trimesh
+import argparse
+import SimpleITK as sitk
+import nibabel as nib
+from skimage.measure import marching_cubes
 
-def extract_meshes_from_segm(segm, mesh_filename):
-    print(f"Unique values in segmentation before processing: {np.unique(segm)}")
-    
-    segm = np.round(segm).astype(np.uint8)
-    label_1 = (segm > 0).astype(np.uint8)
-    
-    unique_vals = np.unique(label_1)
-    if len(unique_vals) == 1 and unique_vals[0] == 0:
-        raise ValueError("Segmentation contains only zeros. Check input NRRD file.")
-    
-    label_1 = binary_closing(label_1, ball(5))
-    label_1 = binary_fill_holes(label_1)
-    label_1 = extract_largest_component(label_1)
-    
-    plt.imshow(label_1[:, :, label_1.shape[2] // 2], cmap="gray")
-    plt.title("Middle Slice of Processed Segmentation")
-    plt.show()
-    
-    verts, faces, _, _ = marching_cubes(label_1, level=0.5)
-    polydata = pv.PolyData(verts, np.hstack((np.full((faces.shape[0], 1), 3), faces)))
-    polydata = polydata.triangulate().extract_surface().clean(tolerance=1e-4).extract_largest()
-    polydata = fill_holes_except_largest(polydata)
-    
-    if not polydata.is_manifold:
-        print("Warning: Surface is not manifold. Attempting further repair.")
-        polydata = polydata.clean(tolerance=1e-3).extract_largest()
-    
-    if not polydata.is_manifold:
-        raise RuntimeError("Failed to repair surface. Ensure the input segmentation is valid.")
-    
-    polydata = polydata.triangulate()
-    print(f"Number of faces before TetGen: {polydata.n_faces}")
-    
-    tg = tetgen.TetGen(polydata)
-    try:
-        tg.tetrahedralize()
-    except RuntimeError:
-        print("TetGen tetrahedralization failed. Check mesh integrity.")
-        return None
-    
-    tet_vertices = tg.node if hasattr(tg, 'node') else None
-    tet_faces = tg.facet if hasattr(tg, 'facet') else None
-    if tet_vertices is None or tet_faces is None:
-        raise RuntimeError("TetGen output is invalid. Ensure input surface is correct.")
-    
-    tet_mesh = trimesh.Trimesh(vertices=tet_vertices, faces=tet_faces, process=False)
-    save_mesh(tet_mesh, mesh_filename)
-    visualize_mesh(tet_mesh.vertices, tet_mesh.faces)
-    
-    return tet_mesh
+def load_segmentation(file_path):
+    """Loads a segmentation file (NIfTI or NRRD) and returns the array and affine matrix."""
+    if file_path.endswith('.nii') or file_path.endswith('.nii.gz'):
+        img = nib.load(file_path)
+        segm = img.get_fdata().astype(np.uint8)
+        affine = img.affine  # Get affine transformation matrix
+    else:  # NRRD format
+        img = sitk.ReadImage(file_path)
+        segm = sitk.GetArrayFromImage(img).astype(np.uint8)
+        spacing = np.array(img.GetSpacing())[::-1]
+        direction = np.array(img.GetDirection()).reshape(3, 3)
+        origin = np.array(img.GetOrigin())
 
-def extract_largest_component(segmentation):
-    labeled_seg = label(segmentation)
-    regions = regionprops(labeled_seg)
-    if not regions:
-        raise ValueError("No connected components found in segmentation.")
+        # Construct affine matrix for NRRD
+        affine = np.eye(4)
+        affine[:3, :3] = direction @ np.diag(spacing)
+        affine[:3, 3] = origin
     
-    largest_region = max(regions, key=lambda r: r.area)
-    return (labeled_seg == largest_region.label).astype(np.uint8)
+    print(f"Loaded segmentation: {file_path}")
+    print(f"Unique values in segmentation: {np.unique(segm)}")
+    print(f"Affine matrix:\n{affine}")
 
-def fill_holes_except_largest(mesh):
-    connectivity = mesh.connectivity()
-    connectivity.set_active_scalars("RegionId")
-    hole_sizes = connectivity.point_data['RegionId']
-    largest_hole_id = np.bincount(hole_sizes).argmax()
-    filled_mesh = connectivity.threshold(largest_hole_id, invert=True)
-    
-    if not isinstance(filled_mesh, pv.PolyData):
-        filled_mesh = filled_mesh.extract_surface()
-    
-    return filled_mesh.triangulate()
+    return segm, affine
 
-def save_mesh(mesh, filename):
-    mesh.export(filename)
+def extract_meshes_from_segm(segm, output_mesh_file, affine, label_value=1):
+    """Extracts surface mesh from a segmentation volume, applies affine transform, and saves it."""
+    print(f"Processing label: {label_value}")
 
-def load_img_file(file):
-    data, _ = nrrd.read(file)  # Load .nrrd segmentation
-    return data, np.eye(4)  # NRRD does not store affine, so return identity matrix
+    # Convert segmentation to binary mask
+    binary_mask = (segm == label_value).astype(np.uint8)
+    print(f"Unique values in binary mask: {np.unique(binary_mask)}")
 
-def visualize_mesh(vertices, faces):
-    fig = plt.figure(dpi=300)
-    ax = fig.add_subplot(111, projection='3d')
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
-    ax.add_collection3d(plt.Poly3DCollection(mesh.triangles, alpha=1.0, facecolor='white', edgecolor='b', linewidth=0.03))
-    ax.set_xlim(0, vertices[:, 0].max())
-    ax.set_ylim(0, vertices[:, 1].max())
-    ax.set_zlim(0, vertices[:, 2].max())
-    ax.axis('off')
-    plt.title("Extracted Mesh Visualization")
-    plt.show()
+    # Run Marching Cubes to extract surface
+    verts, faces, _, _ = marching_cubes(binary_mask, level=0.5)
+    print(f"Marching Cubes Output - Vertices: {len(verts)}, Faces: {len(faces)}")
+
+    # Convert to PyVista format
+    faces = np.hstack([np.full((faces.shape[0], 1), 3), faces])  # Add 3 for triangle format
+    faces = faces.astype(np.int64).flatten()
+    polydata = pv.PolyData(verts, faces)
+
+    print(f"Initial mesh: {polydata.n_faces} faces")
+
+    # Convert PyVista mesh to Trimesh format
+    trimesh_mesh = trimesh.Trimesh(vertices=verts, faces=faces.reshape(-1, 4)[:, 1:])
+
+    # Apply affine transformation using trimesh
+    trimesh_mesh.apply_transform(affine)
+    print("Applied affine transformation to mesh.")
+
+    # Convert back to PyVista
+    transformed_polydata = pv.PolyData(trimesh_mesh.vertices, np.hstack([np.full((trimesh_mesh.faces.shape[0], 1), 3), trimesh_mesh.faces]).flatten())
+
+    # Debugging: Save raw output before cleaning
+    transformed_polydata.save("debug_mesh_before_cleaning.vtp")
+
+    # Clean the mesh
+    cleaned_polydata = transformed_polydata.clean(tolerance=1e-5, absolute=False)
+    print(f"Mesh after cleaning: {cleaned_polydata.n_faces} faces")
+
+    if cleaned_polydata.n_faces == 0:
+        raise RuntimeError("Extracted surface has no faces. Check segmentation input.")
+
+    # Check if the mesh is triangulated
+    if not cleaned_polydata.is_all_triangles:
+        print("Triangulating mesh...")
+        cleaned_polydata.triangulate()
+
+    print(f"Mesh is now triangulated: {cleaned_polydata.is_all_triangles}")
+
+    # Save output mesh
+    cleaned_polydata.save(output_mesh_file)
+    print(f"Mesh saved to {output_mesh_file}")
+
+    # Convert to TetGen format
+    tg = tetgen.TetGen(cleaned_polydata)
+    print("TetGen conversion successful.")
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python3 voxel2surface.py <input_nrrd_file> <output_mesh_file>")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Convert a segmentation to a surface mesh.")
+    parser.add_argument("input_segmentation", type=str, help="Path to the input segmentation file (.nii or .nrrd)")
+    parser.add_argument("output_mesh_file", type=str, help="Path to save the output surface mesh (.vtp)")
+    parser.add_argument("--label", type=int, default=1, help="Label value to extract (default: 1)")
 
-    input_nrrd_file = sys.argv[1]
-    output_mesh_file = sys.argv[2]
-    
-    segm, _ = load_img_file(input_nrrd_file)
-    extract_meshes_from_segm(segm, output_mesh_file)
+    args = parser.parse_args()
+
+    segm, affine = load_segmentation(args.input_segmentation)
+    extract_meshes_from_segm(segm, args.output_mesh_file, affine, label_value=args.label)
 
