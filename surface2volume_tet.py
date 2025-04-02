@@ -129,3 +129,12 @@ if __name__ == "__main__":
     # Run the main function
     main(input_ply_file, output_vtk_file)
 
+# File path
+input = "C:/Users/Nadin/OneDrive/Documents/Computational_Biomechanics_Lab/Repos/compbiomechproject/volume_meshes/PEXA12/PEXA12.vtk"
+output = "C:/Users/Nadin/OneDrive/Documents/Computational_Biomechanics_Lab/Repos/compbiomechproject/volume_meshes/PEXA12/PEXA12.vtu"
+
+#Read and convert
+mesh = pv.read(input)
+mesh.save(output)
+
+print(f"Mesh converted to .vtu successfully.")

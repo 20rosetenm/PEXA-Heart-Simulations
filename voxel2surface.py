@@ -3,7 +3,7 @@ import pyvista as pv
 import tetgen
 import trimesh
 import argparse
-import SimpleITK as sitk
+import SimpleITK as sitk 
 import nibabel as nib
 from skimage.measure import marching_cubes
 
@@ -17,8 +17,11 @@ def load_segmentation(file_path):
         img = sitk.ReadImage(file_path)
         segm = sitk.GetArrayFromImage(img).astype(np.uint8)
         spacing = np.array(img.GetSpacing())[::-1]
-        direction = np.array(img.GetDirection()).reshape(3, 3)
+        direction = np.array(img.GetDirection()).reshape(3, 3) 
         origin = np.array(img.GetOrigin())
+        # Swap the first and second rows
+        direction[[0, 2]] = direction[[2, 0]]
+
 
         # Construct affine matrix for NRRD
         affine = np.eye(4)
@@ -28,6 +31,7 @@ def load_segmentation(file_path):
     print(f"Loaded segmentation: {file_path}")
     print(f"Unique values in segmentation: {np.unique(segm)}")
     print(f"Affine matrix:\n{affine}")
+    print(f"Direction matrix:\n{direction}")
 
     return segm, affine
 
